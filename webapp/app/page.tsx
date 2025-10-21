@@ -24,10 +24,26 @@ export default function Page() {
   }
 
   async function onClick() {
-    if (busy) return; setBusy(true);
-    const r = await doClick();
-    setMine(r.me); setGlobal(r.global);
-    setBusy(false);
+    // UI optimist: afișăm instant clickul
+    setMine((m) => m + 1);
+    setGlobal((g) => g + 1);
+
+    // nu mai blocăm complet butonul; îl „răcim” 120ms ca anti-spam
+    if (busy) return;
+    setBusy(true);
+
+    try {
+      const r = await doClick();
+      // aliniază cu serverul (în caz că s-a desincronizat)
+      if (typeof r?.me === 'number') setMine(r.me);
+      if (typeof r?.global === 'number') setGlobal(r.global);
+    } catch {
+      // dacă a eșuat, doar facem un refresh ca fallback
+      await refresh();
+    } finally {
+      // răcire scurtă ca să poți apăsa des, dar nu flood complet
+      setTimeout(() => setBusy(false), 120);
+    }
   }
 
   async function onChangeName(n: string) {

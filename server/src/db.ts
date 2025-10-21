@@ -107,10 +107,10 @@ export async function incUserClicks(userId: number, delta: number): Promise<numb
   const [userNew] = (await pipe.exec()) as [unknown, unknown, unknown] as [number, number, number][];
 
   // persistă în DB (RPC inc_clicks)
-  await supabaseFetch(`/rest/v1/rpc/inc_clicks`, {
-    method: 'POST',
-    body: JSON.stringify({ user_id: userId, d: delta }),
-  });
+void supabaseFetch(`/rest/v1/rpc/inc_clicks`, {
+  method: 'POST',
+  body: JSON.stringify({ user_id: userId, d: delta }),
+}).catch((e) => console.error('inc_clicks RPC fail', e));
 
   return Number(userNew);
 }
