@@ -15,7 +15,6 @@ declare module 'express-serve-static-core' {
 export function authWebApp(req: Request, res: Response, next: NextFunction) {
   const initData = req.header('x-telegram-init');
 
-  // DEV bypass
   if (ALLOW_DEV && (!initData || initData === 'DEV')) {
     req.tgUser = { id: 999, username: 'dev' };
     return next();
@@ -26,13 +25,11 @@ export function authWebApp(req: Request, res: Response, next: NextFunction) {
   }
 
   try {
-    // Validare minimală (opțional poți aplica validarea completă cu HMAC)
     const params = new URLSearchParams(initData);
     const userStr = params.get('user');
     if (!userStr) throw new Error('no user');
     const user = JSON.parse(userStr) as { id: number; username?: string };
 
-    // Validare HMAC (schematică)
     const hash = params.get('hash');
     if (!hash) throw new Error('no hash');
     const dataCheckString = [...params.entries()]

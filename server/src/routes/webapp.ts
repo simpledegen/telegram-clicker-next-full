@@ -29,16 +29,22 @@ webapp.get('/me', authWebApp, async (req, res) => {
 webapp.post('/click', authWebApp, async (req, res) => {
   const u = req.tgUser!;
   try {
+    // increment rapid în Redis
     const me = await incUserClicks(u.id, 1);
-    const global = await getGlobalClicks();
+    const [global, top] = await Promise.all([
+      getGlobalClicks(),
+      getTopUsersDetailed(20), // ✅ trimitem și leaderboard actualizat
+    ]);
 
-    res.json({ me, global });
-
+    res.json({ me, global, top });
   } catch (_e) {
-    res.status(200).json({
-      me: await getUserClicksCached(u.id),
-      global: await getGlobalClicks(),
-    });
+    // fallback: nu stricăm UI-ul dacă a eșuat RPC/altceva
+    const [mine, global, top] = await Promise.all([
+      getUserClicksCached(u.id),
+      getGlobalClicks(),
+      getTopUsersDetailed(20),
+    ]);
+    res.status(200).json({ me: mine, global, top });
   }
 });
 

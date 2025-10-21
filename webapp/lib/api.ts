@@ -34,8 +34,11 @@ export async function fetchMe() {
 }
 
 export async function doClick() {
-  const r = await fetch(API('/click'), { method: 'POST', headers: { 'x-telegram-init': getInit() } });
-  return jsonOrThrow(r);
+  const r = await fetch(API('/click'), {
+    method: 'POST',
+    headers: { 'x-telegram-init': getInit() },
+  });
+  return r.json() as Promise<{ me: number; global: number; top?: { userId: number; total: number; username?: string }[] }>;
 }
 
 export async function changeName(username: string) {
