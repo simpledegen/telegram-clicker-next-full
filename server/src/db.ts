@@ -109,7 +109,7 @@ export async function incUserClicks(userId: number, delta: number): Promise<numb
   // persistă în DB (RPC inc_clicks)
 void supabaseFetch(`/rest/v1/rpc/inc_clicks`, {
   method: 'POST',
-  body: JSON.stringify({ user_id: userId, d: delta }),
+  body: JSON.stringify({ p_user_id: userId, p_d: delta }),
 }).catch((e) => console.error('inc_clicks RPC fail', e));
 
   return Number(userNew);
