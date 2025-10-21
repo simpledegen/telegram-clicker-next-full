@@ -7,10 +7,6 @@ const keyUser = (id: number) => `user:${id}:total`;
 const keyGlobal = 'global:total';
 const keyLb = 'leaderboard';
 
-/**
- * Increment rapid în Redis + persist în DB prin RPC (fire-and-forget).
- * Îl lăsăm rapid pentru UX. Dacă vrei “strict”, pune await pe RPC și tratează erorile.
- */
 export async function incUserClicks(userId: number, delta: number): Promise<number> {
   const pipe = redis.multi();
   pipe.incrby(keyUser(userId), delta);
@@ -32,7 +28,6 @@ export async function incUserClicks(userId: number, delta: number): Promise<numb
   return userNew;
 }
 
-/** AFIȘARE USER: DB-first, apoi sincronizează Redis dacă e în urmă */
 export async function getUserClicksStable(userId: number): Promise<number> {
   const [rVal, dbVal] = await Promise.all([
     redis.get(keyUser(userId)),
@@ -51,7 +46,6 @@ export async function getUserClicksStable(userId: number): Promise<number> {
   return final;
 }
 
-/** AFIȘARE GLOBAL: DB-first (sumă), apoi ajustează Redis dacă e gol/mai mic */
 export async function getGlobalClicksStable(): Promise<number> {
   const rv = await redis.get(keyGlobal);
   if (rv !== null && !Number.isNaN(Number(rv))) {
@@ -66,14 +60,12 @@ export async function getGlobalClicksStable(): Promise<number> {
   return sum;
 }
 
-/** Leaderboard rămâne din Redis pentru performanță */
 export async function getTopUsers(n: number) {
   const r = await supabaseFetch(
     `/rest/v1/clicks?select=user_id,total&order=total.desc&limit=${n}`,
     { method: 'GET' }
   );
   if (!r.ok) {
-    // fallback pe Redis doar dacă pică Supabase
     const arr = await redis.zrevrange('leaderboard', 0, n - 1, 'WITHSCORES');
     const out: { userId: number; total: number }[] = [];
     for (let i = 0; i < arr.length; i += 2) {
@@ -82,16 +74,13 @@ export async function getTopUsers(n: number) {
     return out;
   }
   const rows = (await r.json()) as { user_id: number; total: number }[];
-  // menținem aceeași formă { userId, total } ca să nu schimbi alt cod
   return rows.map((x) => ({ userId: x.user_id, total: Number(x.total || 0) }));
 }
 
 
-/** Creează/actualizează userul în DB (compat cu vechiul cod) */
 export async function getOrCreateUser(userId: number, username?: string) {
   if (!username) username = `user_${userId}`;
 
-  // Citește existentul
   const existing = await supabaseFetch(`/rest/v1/users?id=eq.${userId}`, { method: 'GET' })
     .then((r) => r.json() as Promise<any[]>)
     .catch(() => []);
@@ -113,7 +102,6 @@ export async function getOrCreateUser(userId: number, username?: string) {
   return { id: userId, username, total };
 }
 
-/** Încălzire global la boot din DB */
 export async function warmupGlobalFromDB() {
   try {
     const dbSum = await sumDbClicks();
@@ -127,10 +115,7 @@ export async function warmupGlobalFromDB() {
   }
 }
 
-// === Top users cu username-uri din Supabase ===
-// Top 20 cu username, cu fallback pe Supabase dacă Redis e gol
 export async function getTopUsersDetailed(limit = 20): Promise<{ userId: number; total: number; username?: string }[]> {
-  // 1) Încercăm din Redis (ZSET "lb")
   try {
     const raw = await redis.zrevrange('lb', 0, limit - 1, 'WITHSCORES');
     const top: { userId: number; total: number }[] = [];
@@ -138,7 +123,6 @@ export async function getTopUsersDetailed(limit = 20): Promise<{ userId: number;
       top.push({ userId: Number(raw[i]), total: Number(raw[i + 1]) });
     }
     if (top.length) {
-      // atașăm username-urile din Supabase
       const ids = top.map(t => t.userId);
       const url = `${process.env.SUPABASE_URL}/rest/v1/users?id=in.(${ids.join(',')})`;
       const r = await fetch(url, {
@@ -147,17 +131,15 @@ export async function getTopUsersDetailed(limit = 20): Promise<{ userId: number;
           Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
         },
       });
-      if (!r.ok) return top; // dacă eșuează, măcar arătăm scorurile
+      if (!r.ok) return top; 
       const rows = (await r.json()) as { id: number; username: string }[];
       const nameById = new Map(rows.map(row => [row.id, row.username]));
       return top.map(t => ({ ...t, username: nameById.get(t.userId) || undefined }));
     }
   } catch {
-    // ignorăm, trecem la fallback
   }
 
-  // 2) Fallback: direct din Supabase (join implicit clicks → users)
-  // Necesită FK: clicks.user_id → users.id (ai deja)
+
   const url = `${process.env.SUPABASE_URL}/rest/v1/clicks?select=user_id,total,users(username)&order=total.desc&limit=${limit}`;
   const r = await fetch(url, {
     headers: {
@@ -165,7 +147,7 @@ export async function getTopUsersDetailed(limit = 20): Promise<{ userId: number;
       Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
     },
   });
-  if (!r.ok) return []; // nimic de afișat
+  if (!r.ok) return [];
   const rows = (await r.json()) as { user_id: number; total: number; users?: { username?: string } }[];
   return rows.map(row => ({
     userId: row.user_id,
@@ -175,7 +157,6 @@ export async function getTopUsersDetailed(limit = 20): Promise<{ userId: number;
 }
 
 
-/** Helper: sumă globală din DB */
 async function sumDbClicks(): Promise<number> {
   const r = await supabaseFetch('/rest/v1/clicks?select=total', { method: 'GET' });
   if (!r.ok) return 0;
@@ -183,7 +164,6 @@ async function sumDbClicks(): Promise<number> {
   return rows.reduce((a, x) => a + Number(x.total || 0), 0);
 }
 
-/** ===== Aliasuri pentru compatibilitate cu vechea bază de cod ===== */
 export { getUserClicksStable as getUserClicksCached };
 export { getGlobalClicksStable as getGlobalClicks };
 

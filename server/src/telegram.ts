@@ -3,7 +3,6 @@ import { upsertSession, deactivateSession } from './dispatcher.js';
 import { getGlobalClicks, getTopUsers, getUserClicksCached } from './db.js';
 import { InlineKeyboard } from 'grammy';
 
-// același welcomeMarkup ca în dispatcher, ca fallback dacă îl vrei aici
 function welcomeMarkup() {
   return new InlineKeyboard()
     .webApp('🚀 Open Mini App', process.env.PUBLIC_MINIAPP_URL!)
@@ -41,7 +40,6 @@ export function createBot() {
   if (!token) throw new Error('Missing BOT_TOKEN');
   const bot = new Bot(token);
 
-  // /start → trimite mesajul “Welcome” + butoane și pornește sesiunea pentru editări
   bot.command('start', async (ctx) => {
     try {
       const chatId = ctx.chat?.id;
@@ -54,14 +52,12 @@ export function createBot() {
       const text = renderWelcome(me, global, leaderboard);
 
       const sent = await ctx.api.sendMessage(chatId, text, { parse_mode: 'HTML', reply_markup: welcomeMarkup() });
-      // important: pornește sesiunea pentru editările periodice
       upsertSession(chatId, sent.message_id);
     } catch (e) {
       console.error('start failed', e);
     }
   });
 
-  // callback “Refresh” → forțează refresh manual al mesajului
   bot.callbackQuery('refresh', async (ctx) => {
     try {
       const chatId = ctx.chat?.id;
@@ -75,27 +71,21 @@ export function createBot() {
 
       await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: welcomeMarkup() });
       await ctx.answerCallbackQuery({ text: 'Refreshed ✅', show_alert: false });
-      // opțional, re-atașăm sesiunea (în caz că s-a pierdut id-ul)
       const mid = ctx.update.callback_query?.message?.message_id;
       if (mid && chatId) upsertSession(chatId, mid);
     } catch (e) {
-      // dacă mesajul nu poate fi editat, ignorăm
       await ctx.answerCallbackQuery().catch(() => {});
     }
   });
 
-  // (opțional) dacă vrei să “închizi” sesiunea când userul scrie altceva
   bot.on('message', async (ctx) => {
     const txt = ctx.message?.text?.trim().toLowerCase() || '';
-    // nu opri sesiunea pentru /start sau comenzi
     if (txt.startsWith('/start') || txt.startsWith('/')) return;
-    // dacă vrei, poți dezactiva sesiunea când userul scrie orice altceva:
-    // deactivateSession(ctx.chat.id);
   });
 
   bot.catch((err) => {
-    console.error('BOT ERROR', err.error); // logează orice eroare din grammy ca să nu dărâme procesul
+    console.error('BOT ERROR', err.error); 
   });
-  
+
   return bot;
 }

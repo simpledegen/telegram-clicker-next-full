@@ -12,10 +12,6 @@ declare module 'express-serve-static-core' {
   }
 }
 
-/**
- * Parsează initData de la Telegram WebApp (x-telegram-init).
- * Pentru dev local (ALLOW_DEV=1), dacă nu există init, folosim un user mock.
- */
 export function authWebApp(req: Request, res: Response, next: NextFunction) {
   const initData = req.header('x-telegram-init');
 

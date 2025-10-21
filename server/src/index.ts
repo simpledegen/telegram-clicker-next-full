@@ -5,7 +5,7 @@ import { webhookCallback } from 'grammy';
 import { createBot } from './telegram.js';
 import { webapp } from './routes/webapp.js';
 import { health } from './routes/health.js';
-import { warmupGlobalFromDB } from './db.js'; // <— adaugă
+import { warmupGlobalFromDB } from './db.js'; 
 
 const log = pino();
 const app = express();
@@ -13,7 +13,6 @@ app.set('trust proxy', true);
 
 const bot = createBot();
 
-// body parser ÎNAINTE de webhook
 app.use(express.json({ limit: '1mb' }));
 
 // webhook
@@ -31,5 +30,5 @@ process.on('uncaughtException', (err) => console.error('UNCAUGHT EXCEPTION', err
 const PORT = Number(process.env.PORT || 8080);
 app.listen(PORT, () => {
   log.info(`API up on ${PORT}`);
-  warmupGlobalFromDB().catch(console.error); // <— încălzire
+  warmupGlobalFromDB().catch(console.error); 
 });

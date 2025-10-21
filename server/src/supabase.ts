@@ -1,5 +1,3 @@
-// Folosește fetch nativ din Node 20 (NU importa "node-fetch").
-
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!;
 
@@ -7,7 +5,6 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   throw new Error('Missing Supabase env');
 }
 
-// Helper generic pentru apeluri Supabase (REST & RPC)
 export function supabaseFetch(path: string, init: RequestInit = {}) {
   const url = path.startsWith('http') ? path : `${SUPABASE_URL}${path}`;
   const headers: Record<string, string> = {
@@ -19,7 +16,6 @@ export function supabaseFetch(path: string, init: RequestInit = {}) {
   return fetch(url, { ...init, headers });
 }
 
-// Metode convenabile pentru operațiile folosite în proiect
 export const sb = {
   async upsertUser(id: number, username: string) {
     const r = await supabaseFetch('/rest/v1/users', {
