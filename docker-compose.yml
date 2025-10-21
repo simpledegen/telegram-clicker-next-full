@@ -1,0 +1,42 @@
+services:
+  api:
+    build: ./server
+    container_name: clicker_api
+    env_file: .env         # doar API are nevoie de .env comun
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  web:
+    build: ./webapp
+    container_name: clicker_web
+    # IMPORTANT: nu mai încărcăm .env aici, ca să nu ia PORT=8080
+    environment:
+      - NODE_ENV=production
+      - PORT=3000          # Next standalone ascultă pe 3000 în container
+      - NEXT_TELEMETRY_DISABLED=1
+    expose:
+      - "3000"             # vizibil doar în rețeaua docker; Nginx va proxy-ui aici
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: clicker_nginx
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "3000:80"          # UI pe http://localhost:3000
+    depends_on:
+      - api
+      - web
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: clicker_redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "60", "1000", "--appendonly", "yes"]
+    restart: unless-stopped
