@@ -127,6 +127,54 @@ export async function warmupGlobalFromDB() {
   }
 }
 
+// === Top users cu username-uri din Supabase ===
+// Top 20 cu username, cu fallback pe Supabase dacă Redis e gol
+export async function getTopUsersDetailed(limit = 20): Promise<{ userId: number; total: number; username?: string }[]> {
+  // 1) Încercăm din Redis (ZSET "lb")
+  try {
+    const raw = await redis.zrevrange('lb', 0, limit - 1, 'WITHSCORES');
+    const top: { userId: number; total: number }[] = [];
+    for (let i = 0; i < raw.length; i += 2) {
+      top.push({ userId: Number(raw[i]), total: Number(raw[i + 1]) });
+    }
+    if (top.length) {
+      // atașăm username-urile din Supabase
+      const ids = top.map(t => t.userId);
+      const url = `${process.env.SUPABASE_URL}/rest/v1/users?id=in.(${ids.join(',')})`;
+      const r = await fetch(url, {
+        headers: {
+          apikey: process.env.SUPABASE_SERVICE_KEY as string,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+        },
+      });
+      if (!r.ok) return top; // dacă eșuează, măcar arătăm scorurile
+      const rows = (await r.json()) as { id: number; username: string }[];
+      const nameById = new Map(rows.map(row => [row.id, row.username]));
+      return top.map(t => ({ ...t, username: nameById.get(t.userId) || undefined }));
+    }
+  } catch {
+    // ignorăm, trecem la fallback
+  }
+
+  // 2) Fallback: direct din Supabase (join implicit clicks → users)
+  // Necesită FK: clicks.user_id → users.id (ai deja)
+  const url = `${process.env.SUPABASE_URL}/rest/v1/clicks?select=user_id,total,users(username)&order=total.desc&limit=${limit}`;
+  const r = await fetch(url, {
+    headers: {
+      apikey: process.env.SUPABASE_SERVICE_KEY as string,
+      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+    },
+  });
+  if (!r.ok) return []; // nimic de afișat
+  const rows = (await r.json()) as { user_id: number; total: number; users?: { username?: string } }[];
+  return rows.map(row => ({
+    userId: row.user_id,
+    total: row.total,
+    username: row.users?.username || undefined,
+  }));
+}
+
+
 /** Helper: sumă globală din DB */
 async function sumDbClicks(): Promise<number> {
   const r = await supabaseFetch('/rest/v1/clicks?select=total', { method: 'GET' });

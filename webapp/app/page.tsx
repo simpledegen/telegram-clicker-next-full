@@ -70,16 +70,11 @@ export default function Page() {
 <div className="mt-4 flex justify-center">
   <button
     className={[
-      // bază
       "inline-flex items-center justify-center w-full max-w-xs rounded-2xl py-5 text-xl font-extrabold",
       "bg-blue-500 text-black shadow-lg transition-all duration-200",
-      // animație implicită (plutire/bounce)
       "motion-safe:animate-bounce",
-      // stare hover: oprește bounce-ul și fă un mic wiggle + glow
       "hover:animate-none hover:-translate-y-0.5 hover:rotate-1 hover:shadow-2xl hover:brightness-110",
-      // stare active: feedback tactil
       "active:scale-95 active:rotate-0",
-      // disabled
       "disabled:opacity-60 disabled:cursor-not-allowed",
     ].join(" ")}
     disabled={busy}

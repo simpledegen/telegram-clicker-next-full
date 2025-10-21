@@ -4,25 +4,36 @@ import {
   incUserClicks,
   getOrCreateUser,
   getGlobalClicks,
-  getTopUsers,
-  getUserClicksCached, // 👈 adăugat importul lipsă
+  getUserClicksCached,
+  getTopUsersDetailed, // ✅ folosim varianta care aduce și username-urile
 } from '../db.js';
 
 export const webapp = Router();
 
-// GET /api/me – datele pentru UI
+/**
+ * GET /api/me – datele pentru UI (cu username în leaderboard)
+ */
 webapp.get('/me', authWebApp, async (req, res) => {
   const u = req.tgUser!;
+  // asigură user + username în DB
   const me = await getOrCreateUser(u.id, u.username);
-  const [global, top] = await Promise.all([getGlobalClicks(), getTopUsers(20)]);
+
+  // global + top cu username
+  const [global, top] = await Promise.all([
+    getGlobalClicks(),
+    getTopUsersDetailed(20),
+  ]);
+
   res.json({
-    me: me.total,
-    global,
-    top,
+    me: me.total, // total-ul meu
+    global,       // total global
+    top,          // [{ userId, total, username? }, ...]
   });
 });
 
-// POST /api/click – click +1, răspuns rapid
+/**
+ * POST /api/click – click +1, răspuns rapid
+ */
 webapp.post('/click', authWebApp, async (req, res) => {
   const u = req.tgUser!;
   try {
@@ -33,8 +44,8 @@ webapp.post('/click', authWebApp, async (req, res) => {
     // răspunde imediat clientului
     res.json({ me, global });
 
-    // persistă în Supabase în background (RPC-ul din incUserClicks e deja fire-and-forget)
-  } catch (e) {
+    // persistă în Supabase în background (RPC-ul din incUserClicks e fire-and-forget)
+  } catch (_e) {
     // fallback: nu stricăm UI-ul dacă a eșuat RPC/altceva
     res.status(200).json({
       me: await getUserClicksCached(u.id),
@@ -43,7 +54,9 @@ webapp.post('/click', authWebApp, async (req, res) => {
   }
 });
 
-// POST /api/name – schimbă username-ul
+/**
+ * POST /api/name – schimbă username-ul
+ */
 webapp.post('/name', authWebApp, async (req, res) => {
   const u = req.tgUser!;
   const { username } = req.body || {};
