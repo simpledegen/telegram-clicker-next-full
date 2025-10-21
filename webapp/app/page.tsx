@@ -24,24 +24,19 @@ export default function Page() {
   }
 
   async function onClick() {
-    // UI optimist: afișăm instant clickul
     setMine((m) => m + 1);
     setGlobal((g) => g + 1);
 
-    // nu mai blocăm complet butonul; îl „răcim” 120ms ca anti-spam
     if (busy) return;
     setBusy(true);
 
     try {
       const r = await doClick();
-      // aliniază cu serverul (în caz că s-a desincronizat)
       if (typeof r?.me === 'number') setMine(r.me);
       if (typeof r?.global === 'number') setGlobal(r.global);
     } catch {
-      // dacă a eșuat, doar facem un refresh ca fallback
       await refresh();
     } finally {
-      // răcire scurtă ca să poți apăsa des, dar nu flood complet
       setTimeout(() => setBusy(false), 120);
     }
   }
@@ -51,13 +46,96 @@ export default function Page() {
   }
 
   return (
-    <div className="wrap">
-      <h1>Clicker</h1>
-      <Counters me={mine} global={global} />
-      <button className="bigbtn" disabled={busy} onClick={onClick}>{busy ? '…' : 'CLICK'}</button>
-      <Leaderboard top={top} />
-      <UsernameSheet onSubmit={onChangeName} />
-      <p className="muted">Updates adapt to load; tap Refresh in chat if needed.</p>
+    <div className="mx-auto max-w-xl px-4 py-6">
+  <header className="mb-6">
+    <div className="flex items-center justify-between">
+      <h1 className="text-2xl font-extrabold tracking-tight">⚡ Clicker</h1>
+      <span className="chip">real-time</span>
     </div>
+  </header>
+
+  {/* Counters */}
+  <section className="grid grid-cols-2 gap-3">
+    <div className="glass p-4">
+      <div className="text-xs/5 opacity-70">Your clicks</div>
+      <div className="mt-1 text-3xl font-black tabular-nums">{mine}</div>
+    </div>
+    <div className="glass p-4">
+      <div className="text-xs/5 opacity-70">Global clicks</div>
+      <div className="mt-1 text-3xl font-black tabular-nums">{global}</div>
+    </div>
+  </section>
+
+  {/* Big action */}
+<div className="mt-4 flex justify-center">
+  <button
+    className={[
+      // bază
+      "inline-flex items-center justify-center w-full max-w-xs rounded-2xl py-5 text-xl font-extrabold",
+      "bg-blue-500 text-black shadow-lg transition-all duration-200",
+      // animație implicită (plutire/bounce)
+      "motion-safe:animate-bounce",
+      // stare hover: oprește bounce-ul și fă un mic wiggle + glow
+      "hover:animate-none hover:-translate-y-0.5 hover:rotate-1 hover:shadow-2xl hover:brightness-110",
+      // stare active: feedback tactil
+      "active:scale-95 active:rotate-0",
+      // disabled
+      "disabled:opacity-60 disabled:cursor-not-allowed",
+    ].join(" ")}
+    disabled={busy}
+    onClick={onClick}
+    aria-busy={busy}
+    aria-label="Click to increase score"
+  >
+    {busy ? "…" : "CLICK"}
+  </button>
+</div>
+  {/* Leaderboard */}
+  <section className="mt-4 glass p-4">
+    <div className="mb-2 flex items-center justify-between">
+      <h2 className="text-sm font-semibold uppercase tracking-wider opacity-80">Top 20</h2>
+      <span className="text-[10px] opacity-60">updated live</span>
+    </div>
+    <div className="max-h-72 overflow-auto pr-1">
+      <ol className="space-y-1 text-sm">
+        {top.length === 0 ? (
+          <li className="opacity-60">—</li>
+        ) : (
+          top.map((t, i) => (
+            <li
+              key={t.userId}
+              className="flex items-center justify-between rounded-lg px-2 py-1 hover:bg-white/5"
+            >
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-[11px] font-bold">
+                  {i + 1}
+                </span>
+                <strong className="font-medium">
+                  {t.username || `user_${t.userId}`}
+                </strong>
+              </div>
+              <span className="tabular-nums font-semibold">{t.total}</span>
+            </li>
+          ))
+        )}
+      </ol>
+    </div>
+  </section>
+
+  {/* Change username */}
+  <section className="mt-4 glass p-4">
+    <div className="mb-2 text-sm font-semibold uppercase tracking-wider opacity-80">
+      Change username
+    </div>
+    <div className="flex gap-2 border border-2 border-black/10 p-3 rounded-xl">
+      <UsernameSheet onSubmit={onChangeName} />
+    </div>
+  </section>
+
+  <p className="mt-4 text-center text-xs opacity-60">
+    Updates adapt to load; tap <span className="font-semibold">Refresh</span> in chat if needed.
+  </p>
+</div>
+
   );
 }

@@ -1,116 +1,142 @@
 import Redis from 'ioredis';
+import { supabaseFetch } from './supabase.js';
 
-// === ENV ===
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!;
+const redis = new Redis(process.env.REDIS_URL!);
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  throw new Error('Missing Supabase env (SUPABASE_URL / SUPABASE_SERVICE_KEY)');
-}
-
-const redis = new Redis(REDIS_URL);
-
-// === Redis keys ===
-const keyUser = (id: number) => `u:${id}:total`;
+const keyUser = (id: number) => `user:${id}:total`;
 const keyGlobal = 'global:total';
-const keyLb = 'lb:z';
+const keyLb = 'leaderboard';
 
-// === Helpers ===
-async function supabaseFetch(path: string, init?: RequestInit) {
-  const url = `${SUPABASE_URL}${path}`;
-  const headers = {
-    apikey: SUPABASE_SERVICE_KEY,
-    Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-    'Content-Type': 'application/json',
-    ...(init?.headers || {}),
-  };
-  const r = await fetch(url, { ...init, headers });
-  if (!r.ok) {
-    const text = await r.text().catch(() => '');
-    throw new Error(`Supabase ${path} ${r.status}: ${text}`);
-  }
-  return r;
-}
-
-// === Public API ===
-
-/** Citește totalul curent din Redis (0 dacă nu există) */
-export async function getUserClicksCached(userId: number): Promise<number> {
-  const v = await redis.get(keyUser(userId));
-  return v ? Number(v) : 0;
-}
-
-/** Total global (din Redis) */
-export async function getGlobalClicks(): Promise<number> {
-  const v = await redis.get(keyGlobal);
-  return v ? Number(v) : 0;
-}
-
-/** Top N din Redis (ZSET) */
-export async function getTopUsers(limit: number): Promise<{ userId: number; total: number }[]> {
-  const rows = await redis.zrevrange(keyLb, 0, limit - 1, 'WITHSCORES');
-  const out: { userId: number; total: number }[] = [];
-  for (let i = 0; i < rows.length; i += 2) {
-    out.push({ userId: Number(rows[i]), total: Number(rows[i + 1]) });
-  }
-  return out;
-}
-
-/** Creează/actualizează userul în Supabase, și întoarce totalul (din Redis, cu fallback la DB) */
-export async function getOrCreateUser(userId: number, username?: string): Promise<{ id: number; username: string; total: number }> {
-  // upsert în public.users
-  if (username && username.length >= 3 && username.length <= 32) {
-    await supabaseFetch(`/rest/v1/users`, {
-      method: 'POST',
-      body: JSON.stringify({ id: userId, username }),
-      headers: { Prefer: 'resolution=merge-duplicates' },
-    });
-  } else {
-    // asigură existența userului (fără a suprascrie username)
-    await supabaseFetch(`/rest/v1/users`, {
-      method: 'POST',
-      body: JSON.stringify({ id: userId, username: username ?? `user_${userId}` }),
-      headers: { Prefer: 'resolution=ignore-duplicates' },
-    });
-  }
-
-  // citește totalul: întâi Redis, apoi DB dacă e cazul
-  let total = await getUserClicksCached(userId);
-  if (!total) {
-    // ia din public.clicks
-    const r = await supabaseFetch(`/rest/v1/clicks?select=total&user_id=eq.${userId}`, { method: 'GET' });
-    const rows = (await r.json()) as { total: number }[];
-    total = rows?.[0]?.total ?? 0;
-    if (total) {
-      await redis.set(keyUser(userId), String(total));
-      await redis.zadd(keyLb, total, String(userId));
-    }
-  }
-
-  // obține username-ul actual (pentru leaderboard)
-  const rU = await supabaseFetch(`/rest/v1/users?id=eq.${userId}&select=username`, { method: 'GET' });
-  const rowU = (await rU.json()) as { username?: string }[];
-  const uname = rowU?.[0]?.username ?? `user_${userId}`;
-
-  return { id: userId, username: uname, total };
-}
-
-/** Incrementează per-user, leaderboard & global în Redis + persistă în Supabase RPC */
+/**
+ * Increment rapid în Redis + persist în DB prin RPC (fire-and-forget).
+ * Îl lăsăm rapid pentru UX. Dacă vrei “strict”, pune await pe RPC și tratează erorile.
+ */
 export async function incUserClicks(userId: number, delta: number): Promise<number> {
-  if (!Number.isFinite(delta) || delta <= 0) delta = 1;
-
   const pipe = redis.multi();
   pipe.incrby(keyUser(userId), delta);
   pipe.incrby(keyGlobal, delta);
   pipe.zincrby(keyLb, delta, String(userId));
-  const [userNew] = (await pipe.exec()) as [unknown, unknown, unknown] as [number, number, number][];
+  const exec = await pipe.exec();
+  const userNewRaw = exec?.[0]?.[1] ?? '0';
+  const userNew = Number(userNewRaw);
 
-  // persistă în DB (RPC inc_clicks)
-void supabaseFetch(`/rest/v1/rpc/inc_clicks`, {
-  method: 'POST',
-  body: JSON.stringify({ p_user_id: userId, p_d: delta }),
-}).catch((e) => console.error('inc_clicks RPC fail', e));
+  void supabaseFetch('/rest/v1/rpc/inc_clicks', {
+    method: 'POST',
+    body: JSON.stringify({ p_user_id: userId, p_d: delta }),
+  })
+    .then(async (r) => {
+      if (!r.ok) throw new Error(`inc_clicks RPC fail ${r.status} ${await r.text().catch(()=>'')}`);
+    })
+    .catch((e) => console.error('inc_clicks RPC fail', e));
 
-  return Number(userNew);
+  return userNew;
 }
+
+/** AFIȘARE USER: DB-first, apoi sincronizează Redis dacă e în urmă */
+export async function getUserClicksStable(userId: number): Promise<number> {
+  const [rVal, dbVal] = await Promise.all([
+    redis.get(keyUser(userId)),
+    (async () => {
+      const r = await supabaseFetch(`/rest/v1/clicks?user_id=eq.${userId}&select=total&limit=1`, { method: 'GET' });
+      if (!r.ok) return 0;
+      const rows = (await r.json()) as { total: number }[];
+      return Number(rows[0]?.total ?? 0);
+    })(),
+  ]);
+
+  const rNum = rVal ? Number(rVal) : 0;
+  const final = Math.max(rNum, dbVal);
+
+  if (final !== rNum) await redis.set(keyUser(userId), String(final));
+  return final;
+}
+
+/** AFIȘARE GLOBAL: DB-first (sumă), apoi ajustează Redis dacă e gol/mai mic */
+export async function getGlobalClicksStable(): Promise<number> {
+  const rv = await redis.get(keyGlobal);
+  if (rv !== null && !Number.isNaN(Number(rv))) {
+    const dbSum = await sumDbClicks();
+    const rNum = Number(rv);
+    const final = Math.max(rNum, dbSum);
+    if (final !== rNum) await redis.set(keyGlobal, String(final));
+    return final;
+  }
+  const sum = await sumDbClicks();
+  await redis.set(keyGlobal, String(sum));
+  return sum;
+}
+
+/** Leaderboard rămâne din Redis pentru performanță */
+export async function getTopUsers(n: number) {
+  const r = await supabaseFetch(
+    `/rest/v1/clicks?select=user_id,total&order=total.desc&limit=${n}`,
+    { method: 'GET' }
+  );
+  if (!r.ok) {
+    // fallback pe Redis doar dacă pică Supabase
+    const arr = await redis.zrevrange('leaderboard', 0, n - 1, 'WITHSCORES');
+    const out: { userId: number; total: number }[] = [];
+    for (let i = 0; i < arr.length; i += 2) {
+      out.push({ userId: Number(arr[i]), total: Number(arr[i + 1]) });
+    }
+    return out;
+  }
+  const rows = (await r.json()) as { user_id: number; total: number }[];
+  // menținem aceeași formă { userId, total } ca să nu schimbi alt cod
+  return rows.map((x) => ({ userId: x.user_id, total: Number(x.total || 0) }));
+}
+
+
+/** Creează/actualizează userul în DB (compat cu vechiul cod) */
+export async function getOrCreateUser(userId: number, username?: string) {
+  if (!username) username = `user_${userId}`;
+
+  // Citește existentul
+  const existing = await supabaseFetch(`/rest/v1/users?id=eq.${userId}`, { method: 'GET' })
+    .then((r) => r.json() as Promise<any[]>)
+    .catch(() => []);
+
+  if (!existing?.length) {
+    await supabaseFetch('/rest/v1/users', {
+      method: 'POST',
+      body: JSON.stringify([{ id: userId, username }]),
+      headers: { Prefer: 'resolution=merge-duplicates' },
+    }).catch(() => {});
+  } else if (existing[0]?.username !== username) {
+    await supabaseFetch(`/rest/v1/users?id=eq.${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ username }),
+    }).catch(() => {});
+  }
+
+  const total = await getUserClicksStable(userId);
+  return { id: userId, username, total };
+}
+
+/** Încălzire global la boot din DB */
+export async function warmupGlobalFromDB() {
+  try {
+    const dbSum = await sumDbClicks();
+    const rVal = await redis.get(keyGlobal);
+    const rNum = rVal ? Number(rVal) : 0;
+    if (!rVal || rNum < dbSum) {
+      await redis.set(keyGlobal, String(dbSum));
+    }
+  } catch (e) {
+    console.error('warmupGlobalFromDB fail', e);
+  }
+}
+
+/** Helper: sumă globală din DB */
+async function sumDbClicks(): Promise<number> {
+  const r = await supabaseFetch('/rest/v1/clicks?select=total', { method: 'GET' });
+  if (!r.ok) return 0;
+  const rows = (await r.json()) as { total: number }[];
+  return rows.reduce((a, x) => a + Number(x.total || 0), 0);
+}
+
+/** ===== Aliasuri pentru compatibilitate cu vechea bază de cod ===== */
+export { getUserClicksStable as getUserClicksCached };
+export { getGlobalClicksStable as getGlobalClicks };
+
+export { redis };

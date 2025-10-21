@@ -1,5 +1,5 @@
 import { Bot, InlineKeyboard } from 'grammy';
-import { getGlobalClicks, getTopUsers, getUserClicksCached } from './db.js';
+import { getGlobalClicksStable, getTopUsers, getUserClicksStable } from './db.js';
 
 type Ticket = { chatId: number; messageId: number; active: boolean; lastPush: number };
 const sessions = new Map<number, Ticket>();
@@ -18,11 +18,11 @@ export function attachDispatcher(bot: Bot) {
     const tickets = [...sessions.values()].filter(t => t.active && now - t.lastPush >= intervalMs);
     if (!tickets.length) return;
 
-    const [global, top] = await Promise.all([getGlobalClicks(), getTopUsers(20)]);
+    const [global, top] = await Promise.all([getGlobalClicksStable(), getTopUsers(20)]);
 
     await Promise.all(tickets.map(async t => {
       try {
-        const userTotal = await getUserClicksCached(t.chatId);
+        const userTotal = await getUserClicksStable(t.chatId);
         const leaderboard = await formatLeaderboard(top);
         const text = renderWelcome(userTotal, global, leaderboard);
         await bot.api.editMessageText(t.chatId, t.messageId, text, { parse_mode: 'HTML', reply_markup: welcomeMarkup() });
